@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: bilingual-voice-chatbot-api
-    dockerfilePath: Dockerfile
-    envVars:
-      - key: GROQ_API_KEY
-        sync: false
