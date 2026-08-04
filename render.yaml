@@ -1,11 +1,7 @@
 services:
   - type: web
     name: bilingual-voice-chatbot-api
-    runtime: python
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && python main.py
+    dockerfilePath: Dockerfile
     envVars:
       - key: GROQ_API_KEY
         sync: false
-      - key: PYTHON_VERSION
-        value: "3.11.9"
