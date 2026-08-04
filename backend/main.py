@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://bilingual-voice-chatbot.vercel.app",
+    "https://bilingual-voice-chatbot-hariganesh0508.vercel.app",
     os.getenv("FRONTEND_URL", ""),
 ]
 
