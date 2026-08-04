@@ -81,6 +81,12 @@ export function VoiceChat() {
 
   // Mic toggle: try VAD first, fall back to browser STT
   const handleMicToggle = useCallback(async () => {
+    if (isSpeaking) {
+      stopSpeaking();
+      stopAudioPlayback();
+      return;
+    }
+    if (aiStreamingText) return;
     setMicError("");
     try {
       await startCapture();
@@ -90,7 +96,7 @@ export function VoiceChat() {
         sttStart();
       }
     }
-  }, [startCapture, sttSupported, sttStart]);
+  }, [startCapture, sttSupported, sttStart, isSpeaking, stopSpeaking, stopAudioPlayback, aiStreamingText]);
 
   const handleMicManualStop = useCallback(() => {
     vadManualStop();
