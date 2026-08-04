@@ -1,4 +1,4 @@
-const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
+const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "wss://bilingual-voice-chatbot.onrender.com";
 export const WS_URL = WS_BASE + "/ws/chat";
 export const API_URL = WS_BASE.replace("ws://", "http://").replace("wss://", "https://");
 
