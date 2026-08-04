@@ -195,7 +195,7 @@ export function VoiceChat() {
   // Sentence-level TTS: send completed sentence to backend for edge-tts
   const synthesizeAndPlay = useCallback(
     (sentence: string, lang: Language) => {
-      sendMessage({ type: "user_text", text: sentence, language: lang, tts_only: true });
+      sendMessage({ type: "tts_only", text: sentence, language: lang });
     },
     []
   );

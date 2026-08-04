@@ -108,6 +108,12 @@ async def websocket_chat(websocket: WebSocket):
             elif event_type == "user_audio":
                 await _handle_audio(websocket, msg, client_id, history)
 
+            elif event_type == "tts_only":
+                text = msg.get("text", "").strip()
+                lang = msg.get("language", "en")
+                if text:
+                    await _stream_tts(websocket, text, lang)
+
             elif event_type == "ping":
                 await _send(websocket, "pong", {})
 
