@@ -1,0 +1,9 @@
+const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
+export const WS_URL = WS_BASE + "/ws/chat";
+export const API_URL = WS_BASE.replace("ws://", "http://").replace("wss://", "https://");
+
+export const RATE_LIMIT_DEBOUNCE_MS = 1500;
+export const MAX_TEXT_LENGTH = 500;
+
+export const VAD_THRESHOLD = 0.01;
+export const VAD_SILENCE_MS = 1200;
