@@ -11,6 +11,7 @@ export function useWebSocket({ onEvent, onAudioChunk }: UseWebSocketOptions) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const keepAliveRef = useRef<ReturnType<typeof setInterval>>();
   const backoffRef = useRef(1000);
   const onEventRef = useRef(onEvent);
   const onAudioChunkRef = useRef(onAudioChunk);
@@ -29,6 +30,12 @@ export function useWebSocket({ onEvent, onAudioChunk }: UseWebSocketOptions) {
       setConnectionState("connected");
       backoffRef.current = 1000;
       console.log("[WS] Connected");
+      clearInterval(keepAliveRef.current);
+      keepAliveRef.current = setInterval(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 80000);
     };
 
     ws.onmessage = (event) => {
@@ -47,6 +54,7 @@ export function useWebSocket({ onEvent, onAudioChunk }: UseWebSocketOptions) {
     ws.onclose = () => {
       setConnectionState("disconnected");
       wsRef.current = null;
+      clearInterval(keepAliveRef.current);
       const delay = Math.min(backoffRef.current, 10000);
       reconnectTimer.current = setTimeout(connect, delay);
       backoffRef.current *= 1.5;
@@ -61,6 +69,7 @@ export function useWebSocket({ onEvent, onAudioChunk }: UseWebSocketOptions) {
     connect();
     return () => {
       clearTimeout(reconnectTimer.current);
+      clearInterval(keepAliveRef.current);
       wsRef.current?.close();
     };
   }, [connect]);

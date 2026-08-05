@@ -12,6 +12,9 @@ import { StatusBar } from "./StatusBar";
 import { detectLanguage } from "../utils/languageDetector";
 import { API_URL } from "../utils/constants";
 
+const STT_WARNING_MS = 10000;
+const STT_TIMEOUT_MS = 20000;
+
 let msgId = 0;
 const nextId = () => `msg-${Date.now()}-${++msgId}`;
 
@@ -24,8 +27,11 @@ export function VoiceChat() {
   const [micError, setMicError] = useState("");
   const [fallbackMode, setFallbackMode] = useState<"whisper" | "browser_stt" | "browser_tts" | null>(null);
   const [backendAwake, setBackendAwake] = useState(false);
+  const [sttWarning, setSttWarning] = useState<"slow" | "timeout" | null>(null);
   const audioBufferRef = useRef("");
   const currentSentenceRef = useRef("");
+  const sttTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const sttTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis({ language });
   const { playChunk, stopAll: stopAudioPlayback } = useAudioPlayback();
@@ -237,6 +243,22 @@ export function VoiceChat() {
     return () => window.speechSynthesis?.removeEventListener("voiceschanged", h);
   }, []);
 
+  useEffect(() => {
+    if (statusMsg === "Transcribing...") {
+      setSttWarning(null);
+      sttTimerRef.current = setTimeout(() => setSttWarning("slow"), STT_WARNING_MS);
+      sttTimeoutRef.current = setTimeout(() => setSttWarning("timeout"), STT_TIMEOUT_MS);
+    } else {
+      clearTimeout(sttTimerRef.current);
+      clearTimeout(sttTimeoutRef.current);
+      setSttWarning(null);
+    }
+    return () => {
+      clearTimeout(sttTimerRef.current);
+      clearTimeout(sttTimeoutRef.current);
+    };
+  }, [statusMsg]);
+
   const handleTextSend = useCallback(
     (text: string) => {
       const detected = detectLanguage(text);
@@ -275,9 +297,33 @@ export function VoiceChat() {
         </div>
       )}
 
-      {statusMsg && !micError && (
+      {statusMsg && !micError && !sttWarning && (
         <div style={{ margin: "0 16px", padding: "8px 12px", borderRadius: "8px", background: "#e7f1ff", color: "#004085", fontSize: "13px" }}>
           {statusMsg}
+        </div>
+      )}
+
+      {sttWarning === "slow" && (
+        <div style={{ margin: "0 16px", padding: "8px 12px", borderRadius: "8px", background: "#fff3cd", color: "#856404", fontSize: "13px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>STT is taking longer than usual...</span>
+          <button
+            onClick={() => { setSttWarning(null); setStatusMsg(""); }}
+            style={{ background: "none", border: "1px solid #856404", borderRadius: "4px", padding: "2px 8px", cursor: "pointer", color: "#856404", fontSize: "12px" }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {sttWarning === "timeout" && (
+        <div style={{ margin: "0 16px", padding: "10px 16px", borderRadius: "8px", background: "#f8d7da", color: "#721c24", fontSize: "13px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>STT timed out. Please try again.</span>
+          <button
+            onClick={() => { setSttWarning(null); setStatusMsg(""); }}
+            style={{ background: "none", border: "1px solid #721c24", borderRadius: "4px", padding: "2px 8px", cursor: "pointer", color: "#721c24", fontSize: "12px" }}
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
