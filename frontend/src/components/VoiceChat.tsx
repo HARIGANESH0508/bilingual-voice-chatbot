@@ -52,7 +52,7 @@ export function VoiceChat() {
     [language]
   );
 
-  const { recordingState: vadState, rmsLevel, startCapture, manualStop: vadManualStop } = useVoiceActivityDetection({
+  const { recordingState: vadState, rmsLevel, startCapture, manualStop: vadManualStop, resetState: vadReset } = useVoiceActivityDetection({
     onAudioCaptured: handleVadAudio,
   });
 
@@ -164,22 +164,25 @@ export function VoiceChat() {
           const data = audioBufferRef.current;
           audioBufferRef.current = "";
           if (data) playChunk(data);
+          vadReset();
           break;
         }
 
         case "tts_fallback":
           setFallbackMode("browser_tts");
+          vadReset();
           break;
 
         case "error":
           setStatusMsg(`Error: ${event.message}`);
+          vadReset();
           break;
 
         case "pong":
           break;
       }
     },
-    [language, playChunk]
+    [language, playChunk, vadReset]
   );
 
   const handleAudioBinary = useCallback(
