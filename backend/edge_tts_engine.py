@@ -1,4 +1,4 @@
-"""edge-tts synthesis optimized for low latency."""
+"""edge-tts synthesis — robust with retry and fallback."""
 
 import os
 import logging
@@ -8,49 +8,55 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 TAMIL_VOICES = ["ta-IN-PallaviNeural", "ta-IN-ValluvarNeural"]
-ENGLISH_VOICE = os.getenv("TTS_ENGLISH_VOICE", "en-IN-NeerjaNeural")
-TTS_TIMEOUT_SECONDS = 10
-TTS_RETRIES = 2
+ENGLISH_VOICES = ["en-IN-NeerjaNeural", "en-IN-PrabhatNeural"]
+TTS_TIMEOUT_SECONDS = 12
+TTS_RETRIES = 3
+TTS_RETRY_DELAY = 0.5
 
 
 def _get_voices(language: str) -> list[str]:
     if language == "ta":
         return TAMIL_VOICES
-    return [ENGLISH_VOICE]
+    return ENGLISH_VOICES
+
+
+async def _synthesize_once(text: str, voice: str) -> Optional[bytes]:
+    """Try to synthesize with a single voice."""
+    import edge_tts
+
+    communicate = edge_tts.Communicate(text, voice)
+    audio_data = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
+    return audio_data if audio_data else None
 
 
 async def synthesize_chunk(
     text: str,
     language: str,
 ) -> Optional[bytes]:
-    """Synthesize a single text chunk to MP3 bytes using edge-tts with retry."""
-    import edge_tts
-
+    """Synthesize text to MP3 bytes with retry across multiple voices."""
     voices = _get_voices(language)
 
     for attempt in range(TTS_RETRIES):
         for voice in voices:
             try:
-                communicate = edge_tts.Communicate(text, voice)
-                audio_data = b""
-
-                async def _stream():
-                    nonlocal audio_data
-                    async for chunk in communicate.stream():
-                        if chunk["type"] == "audio":
-                            audio_data += chunk["data"]
-
-                await asyncio.wait_for(_stream(), timeout=TTS_TIMEOUT_SECONDS)
-
-                if audio_data:
-                    logger.info(f"[TTS] {voice} OK: {len(audio_data)} bytes for '{text[:30]}...'")
-                    return audio_data
-                else:
-                    logger.warning(f"[TTS] {voice} returned empty, trying next voice")
+                result = await asyncio.wait_for(
+                    _synthesize_once(text, voice),
+                    timeout=TTS_TIMEOUT_SECONDS,
+                )
+                if result:
+                    logger.info(f"[TTS] OK ({voice}, attempt {attempt+1}): {len(result)} bytes")
+                    return result
+                logger.warning(f"[TTS] {voice} empty (attempt {attempt+1})")
             except asyncio.TimeoutError:
-                logger.warning(f"[TTS] {voice} timed out (attempt {attempt+1})")
+                logger.warning(f"[TTS] {voice} timeout (attempt {attempt+1})")
             except Exception as e:
-                logger.warning(f"[TTS] {voice} failed: {e} (attempt {attempt+1})")
+                logger.warning(f"[TTS] {voice} error: {e} (attempt {attempt+1})")
 
-    logger.error(f"[TTS] All voices failed for: {text[:50]}...")
+        if attempt < TTS_RETRIES - 1:
+            await asyncio.sleep(TTS_RETRY_DELAY * (attempt + 1))
+
+    logger.error(f"[TTS] ALL FAILED for: {text[:50]}...")
     return None

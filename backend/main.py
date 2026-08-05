@@ -227,6 +227,7 @@ async def _process_and_respond(ws, user_text, lang, history):
     sentence_buffer = ""
     sentence_count = 0
     audio_started = False
+    any_tts_ok = False
 
     try:
         async for token in generate_response_stream(user_text, history, lang):
@@ -247,7 +248,15 @@ async def _process_and_respond(ws, user_text, lang, history):
                             await _send(ws, "audio_start", {"format": "mp3"})
                             audio_started = True
                         logger.info(f"[Pipeline] Sentence {sentence_count} ready, sending to TTS: {s[:40]}...")
-                        await _synthesize_and_send(ws, s, lang)
+                        t0 = time.time()
+                        audio_data = await synthesize_chunk(s, lang)
+                        if audio_data:
+                            b64 = base64.b64encode(audio_data).decode("ascii")
+                            await _send(ws, "audio_chunk", {"data": b64})
+                            any_tts_ok = True
+                            logger.info(f"[Pipeline] TTS done in {((time.time()-t0)*1000):.0f}ms, {len(audio_data)} bytes")
+                            stats.tts_chars += len(s)
+                            stats.tts_requests += 1
                 sentence_buffer = sentences[-1]
 
             stats.groq_llm_requests += 1
@@ -272,29 +281,37 @@ async def _process_and_respond(ws, user_text, lang, history):
         if not audio_started:
             await _send(ws, "audio_start", {"format": "mp3"})
             audio_started = True
-        await _synthesize_and_send(ws, sentence_buffer.strip(), lang)
+        t0 = time.time()
+        audio_data = await synthesize_chunk(sentence_buffer.strip(), lang)
+        if audio_data:
+            b64 = base64.b64encode(audio_data).decode("ascii")
+            await _send(ws, "audio_chunk", {"data": b64})
+            any_tts_ok = True
+            logger.info(f"[Pipeline] TTS done in {((time.time()-t0)*1000):.0f}ms, {len(audio_data)} bytes")
+            stats.tts_chars += len(sentence_buffer.strip())
+            stats.tts_requests += 1
 
     if audio_started:
         await _send(ws, "audio_end", {})
 
+    if audio_started and not any_tts_ok:
+        await _send(ws, "tts_fallback", {"message": "Using device voice"})
+
+
 
 async def _synthesize_and_send(ws, text, lang):
     t_tts = time.time()
-    try:
-        audio_data = await synthesize_chunk(text, lang)
-        if audio_data:
-            b64 = base64.b64encode(audio_data).decode("ascii")
-            await _send(ws, "audio_chunk", {"data": b64})
-            tts_ms = (time.time() - t_tts) * 1000
-            logger.info(f"[Pipeline] TTS done in {tts_ms:.0f}ms, {len(audio_data)} bytes")
-            stats.tts_chars += len(text)
-            stats.tts_requests += 1
-        else:
-            logger.warning(f"TTS returned no audio for: {text[:50]}")
-    except Exception as e:
-        logger.error(f"TTS failed: {e}")
-        stats.log_error(f"TTS: {e}")
-        await _send(ws, "tts_fallback", {"message": "Using device voice"})
+    audio_data = await synthesize_chunk(text, lang)
+    if audio_data:
+        b64 = base64.b64encode(audio_data).decode("ascii")
+        await _send(ws, "audio_chunk", {"data": b64})
+        tts_ms = (time.time() - t_tts) * 1000
+        logger.info(f"[Pipeline] TTS done in {tts_ms:.0f}ms, {len(audio_data)} bytes")
+        stats.tts_chars += len(text)
+        stats.tts_requests += 1
+    else:
+        logger.warning(f"[Pipeline] TTS skipped (no audio): {text[:50]}")
+        stats.log_error(f"TTS: no audio for '{text[:30]}...'")
 
 
 if __name__ == "__main__":
