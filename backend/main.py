@@ -250,7 +250,10 @@ async def _process_and_respond(ws, user_text, lang, history):
         return
 
     llm_ms = (time.time() - t_llm) * 1000
-    logger.info(f"[Pipeline] LLM done in {llm_ms:.0f}ms ({first_token_time:.0f}ms to first token), {len(full_response)} chars")
+    if first_token_time is not None:
+        logger.info(f"[Pipeline] LLM done in {llm_ms:.0f}ms ({first_token_time:.0f}ms to first token), {len(full_response)} chars")
+    else:
+        logger.info(f"[Pipeline] LLM done in {llm_ms:.0f}ms (no tokens), {len(full_response)} chars")
 
     await _send(ws, "ai_done", {"text": full_response})
     history.append({"role": "model", "text": full_response})

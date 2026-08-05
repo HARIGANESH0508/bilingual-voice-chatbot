@@ -9,7 +9,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 WHISPER_MODEL = "whisper-large-v3"
-STT_TIMEOUT_SECONDS = 25
+STT_TIMEOUT_SECONDS = 30
 
 TAMIL_PROMPT = "Vanakkam. Idhu oru Tamil audio. Tamilil pesugira audio."
 ENGLISH_PROMPT = "This is a bilingual conversation in Tamil and English."
