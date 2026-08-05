@@ -12,8 +12,8 @@ import { StatusBar } from "./StatusBar";
 import { detectLanguage } from "../utils/languageDetector";
 import { API_URL } from "../utils/constants";
 
-const STT_WARNING_MS = 10000;
-const STT_TIMEOUT_MS = 20000;
+const STT_WARNING_MS = 12000;
+const STT_TIMEOUT_MS = 25000;
 
 let msgId = 0;
 const nextId = () => `msg-${Date.now()}-${++msgId}`;
