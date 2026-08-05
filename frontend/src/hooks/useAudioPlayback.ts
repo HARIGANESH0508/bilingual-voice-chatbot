@@ -1,71 +1,71 @@
 import { useCallback, useRef } from "react";
 
 export function useAudioPlayback() {
-  const audioQueueRef = useRef<HTMLAudioElement[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const playQueueRef = useRef<Array<{ data: string; resolve: () => void }>>([]);
   const isPlayingRef = useRef(false);
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  const playChunk = useCallback((b64Data: string, onDone?: () => void) => {
+  const getCtx = useCallback(async () => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+      audioCtxRef.current = new AudioContext();
+    }
+    if (audioCtxRef.current.state === "suspended") {
+      await audioCtxRef.current.resume();
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  const playNext = useCallback(async () => {
+    if (playQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      return;
+    }
+
+    isPlayingRef.current = true;
+    const item = playQueueRef.current.shift()!;
+
     try {
-      const byteString = atob(b64Data);
+      const ctx = await getCtx();
+      const byteString = atob(item.data);
       const ab = new ArrayBuffer(byteString.length);
       const ia = new Uint8Array(ab);
       for (let i = 0; i < byteString.length; i++) {
         ia[i] = byteString.charCodeAt(i);
       }
-      const blob = new Blob([ab], { type: "audio/mpeg" });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
 
-      audioQueueRef.current.push(audio);
-
-      if (!isPlayingRef.current) {
-        playNext(onDone);
-      }
+      const audioBuffer = await ctx.decodeAudioData(ab);
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      source.onended = () => {
+        item.resolve();
+        playNext();
+      };
+      source.start(0);
     } catch (e) {
-      console.error("Failed to queue audio chunk:", e);
+      console.warn("[Audio] Playback error, skipping chunk:", e);
+      item.resolve();
+      playNext();
     }
-  }, []);
+  }, [getCtx]);
 
-  const playNext = (onDone?: () => void) => {
-    if (audioQueueRef.current.length === 0) {
-      isPlayingRef.current = false;
-      currentAudioRef.current = null;
-      onDone?.();
-      return;
-    }
-
-    isPlayingRef.current = true;
-    const audio = audioQueueRef.current.shift()!;
-    currentAudioRef.current = audio;
-
-    audio.onended = () => {
-      URL.revokeObjectURL(audio.src);
-      playNext(onDone);
-    };
-
-    audio.onerror = (e) => {
-      console.warn("Audio playback error:", e);
-      URL.revokeObjectURL(audio.src);
-      playNext(onDone);
-    };
-
-    audio.play().catch((e) => {
-      console.warn("Audio play() failed:", e);
-      URL.revokeObjectURL(audio.src);
-      playNext(onDone);
+  const playChunk = useCallback((b64Data: string) => {
+    return new Promise<void>((resolve) => {
+      playQueueRef.current.push({ data: b64Data, resolve });
+      if (!isPlayingRef.current) {
+        playNext();
+      }
     });
-  };
+  }, [playNext]);
 
   const stopAll = useCallback(() => {
-    audioQueueRef.current.forEach((a) => {
-      a.pause();
-      URL.revokeObjectURL(a.src);
-    });
-    audioQueueRef.current = [];
-    currentAudioRef.current?.pause();
+    playQueueRef.current.forEach((item) => item.resolve());
+    playQueueRef.current = [];
     isPlayingRef.current = false;
-    currentAudioRef.current = null;
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close();
+      audioCtxRef.current = null;
+    }
   }, []);
 
   return { playChunk, stopAll };

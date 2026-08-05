@@ -1,4 +1,4 @@
-"""FastAPI backend for bilingual voice chatbot."""
+"""FastAPI backend for bilingual voice chatbot — optimized for low latency."""
 
 import os
 import json
@@ -6,6 +6,7 @@ import time
 import base64
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -15,14 +16,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from language_detector import detect_language
 from groq_client import generate_response_stream
 from groq_whisper_stt import transcribe_audio
-from edge_tts_engine import synthesize_stream
+from edge_tts_engine import synthesize_chunk
 from usage_tracker import stats
 
 load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,9 @@ ALLOWED_ORIGINS = [
 ]
 
 RATE_LIMIT_WINDOW = 10
-RATE_LIMIT_MAX = 10
+RATE_LIMIT_MAX = 15
+
+SENTENCE_SPLITTER = re.compile(r"(?<=[.!?\u0964\u0965])\s+")
 
 
 @asynccontextmanager
@@ -87,7 +91,6 @@ async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
     history: list[dict] = []
-    detected_language = "en"
 
     await _send(websocket, "session_info", {"client_id": client_id})
 
@@ -104,16 +107,13 @@ async def websocket_chat(websocket: WebSocket):
 
             if event_type == "user_text":
                 await _handle_text(websocket, msg, client_id, history)
-
             elif event_type == "user_audio":
                 await _handle_audio(websocket, msg, client_id, history)
-
             elif event_type == "tts_only":
                 text = msg.get("text", "").strip()
                 lang = msg.get("language", "en")
                 if text:
                     await _stream_tts(websocket, text, lang)
-
             elif event_type == "ping":
                 await _send(websocket, "pong", {})
 
@@ -144,8 +144,10 @@ async def _handle_text(ws, msg, client_id, history):
     if not user_text:
         return
 
+    t0 = time.time()
     lang = detect_language(user_text)
     await _send(ws, "transcript", {"text": user_text, "language": lang})
+    logger.info(f"[Pipeline] Text received in {(time.time()-t0)*1000:.0f}ms: {user_text[:50]}")
 
     history.append({"role": "user", "text": user_text})
     if len(history) > 20:
@@ -168,6 +170,7 @@ async def _handle_audio(ws, msg, client_id, history):
         return
 
     await _send(ws, "status", {"message": "Transcribing..."})
+    t0 = time.time()
 
     try:
         audio_bytes = base64.b64decode(audio_b64)
@@ -175,15 +178,21 @@ async def _handle_audio(ws, msg, client_id, history):
         await _send(ws, "error", {"message": "Invalid audio data"})
         return
 
+    logger.info(f"[Pipeline] Audio received: {len(audio_bytes)} bytes, decoding in {(time.time()-t0)*1000:.0f}ms")
+
     whisper_lang = "ta" if language_hint == "ta" else "en"
+    t_stt = time.time()
     transcribed = await asyncio.get_event_loop().run_in_executor(
         None, transcribe_audio, audio_bytes, whisper_lang, mime_type
     )
+    stt_ms = (time.time() - t_stt) * 1000
     stats.groq_stt_requests += 1
 
     if not transcribed:
         await _send(ws, "error", {"message": "Could not transcribe. Please try again."})
         return
+
+    logger.info(f"[Pipeline] STT done in {stt_ms:.0f}ms: {transcribed[:50]}")
 
     lang = detect_language(transcribed)
     await _send(ws, "transcript", {"text": transcribed, "language": lang, "source": "whisper"})
@@ -197,12 +206,28 @@ async def _handle_audio(ws, msg, client_id, history):
 
 async def _process_and_respond(ws, user_text, lang, history):
     await _send(ws, "ai_start", {"language": lang})
+    t_llm = time.time()
 
     full_response = ""
+    sentence_buffer = ""
+    sentence_count = 0
+
     try:
         async for token in generate_response_stream(user_text, history, lang):
             full_response += token
+            sentence_buffer += token
             await _send(ws, "ai_token", {"token": token})
+
+            sentences = SENTENCE_SPLITTER.split(sentence_buffer)
+            if len(sentences) > 1:
+                for s in sentences[:-1]:
+                    s = s.strip()
+                    if s and len(s) > 3:
+                        sentence_count += 1
+                        logger.info(f"[Pipeline] Sentence {sentence_count} ready, sending to TTS: {s[:40]}...")
+                        asyncio.create_task(_stream_tts(ws, s, lang))
+                sentence_buffer = sentences[-1]
+
             stats.groq_llm_requests += 1
     except Exception as e:
         logger.error(f"LLM error: {e}")
@@ -210,30 +235,38 @@ async def _process_and_respond(ws, user_text, lang, history):
         await _send(ws, "error", {"message": f"AI failed: {str(e)}"})
         return
 
+    llm_ms = (time.time() - t_llm) * 1000
+    logger.info(f"[Pipeline] LLM done in {llm_ms:.0f}ms, {len(full_response)} chars")
+
     await _send(ws, "ai_done", {"text": full_response})
     history.append({"role": "model", "text": full_response})
 
-    await _stream_tts(ws, full_response, lang)
+    if sentence_buffer.strip() and len(sentence_buffer.strip()) > 3:
+        await _stream_tts(ws, sentence_buffer.strip(), lang)
 
 
 async def _stream_tts(ws, text, lang):
     await _send(ws, "audio_start", {"format": "mp3"})
-    char_count = 0
+    t_tts = time.time()
 
     try:
-        async for audio_chunk in synthesize_stream(text, lang):
-            b64_chunk = base64.b64encode(audio_chunk).decode("ascii")
-            await _send(ws, "audio_chunk", {"data": b64_chunk})
-            char_count += len(text)
+        audio_data = await synthesize_chunk(text, lang)
+        if audio_data:
+            b64 = base64.b64encode(audio_data).decode("ascii")
+            await _send(ws, "audio_chunk", {"data": b64})
+            tts_ms = (time.time() - t_tts) * 1000
+            logger.info(f"[Pipeline] TTS done in {tts_ms:.0f}ms, {len(audio_data)} bytes")
+            stats.tts_chars += len(text)
+            stats.tts_requests += 1
+        else:
+            logger.warning(f"TTS returned no audio for: {text[:50]}")
     except Exception as e:
-        logger.error(f"TTS streaming failed: {e}")
+        logger.error(f"TTS failed: {e}")
         stats.log_error(f"TTS: {e}")
         await _send(ws, "tts_fallback", {"message": "Using device voice"})
         return
 
     await _send(ws, "audio_end", {})
-    stats.tts_chars += char_count
-    stats.tts_requests += 1
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
-"""Groq LLM streaming integration with fallback model."""
+"""Groq LLM streaming integration — optimized for low latency."""
 
 import os
+import time
 import logging
 from typing import AsyncGenerator
 from groq import Groq
@@ -17,7 +18,6 @@ avoid long paragraphs, avoid markdown, avoid bullet points, avoid any text forma
 Keep to 1-3 sentences unless asked for more detail."""
 
 MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-MAX_RETRIES = 3
 
 
 def _get_client() -> Groq:
@@ -44,7 +44,8 @@ async def generate_response_stream(
     last_error = None
     for model in MODELS:
         try:
-            logger.info(f"Trying model: {model}")
+            t0 = time.time()
+            logger.info(f"[LLM] Requesting {model}...")
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -52,8 +53,13 @@ async def generate_response_stream(
                 max_tokens=200,
                 stream=True,
             )
+            first_token = True
             for chunk in response:
                 if chunk.choices[0].delta.content:
+                    if first_token:
+                        ttft = (time.time() - t0) * 1000
+                        logger.info(f"[LLM] First token in {ttft:.0f}ms")
+                        first_token = False
                     yield chunk.choices[0].delta.content
             return
         except Exception as e:

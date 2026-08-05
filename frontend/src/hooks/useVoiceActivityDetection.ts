@@ -11,12 +11,13 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
   const [rmsLevel, setRmsLevel] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const animFrameRef = useRef<number>(0);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const hasSpeechRef = useRef(false);
   const chunksRef = useRef<Blob[]>([]);
   const onAudioRef = useRef(onAudioCaptured);
+  const startTimeRef = useRef(0);
   onAudioRef.current = onAudioCaptured;
 
   const stopCapture = useCallback(() => {
@@ -35,15 +36,24 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
 
   const startCapture = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       streamRef.current = stream;
 
-      const audioCtx = new AudioContext();
+      let audioCtx = audioCtxRef.current;
+      if (!audioCtx || audioCtx.state === "closed") {
+        audioCtx = new AudioContext();
+        audioCtxRef.current = audioCtx;
+      }
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume();
+      }
+
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       source.connect(analyser);
-      analyserRef.current = analyser;
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
@@ -59,14 +69,16 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
 
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        const elapsed = Date.now() - startTimeRef.current;
+        console.log(`[VAD] Recording captured: ${blob.size} bytes in ${elapsed}ms`);
         if (blob.size > 100) {
           onAudioRef.current(blob);
         } else {
           setRecordingState("idle");
         }
-        audioCtx.close();
       };
 
+      startTimeRef.current = Date.now();
       recorder.start(100);
       setRecordingState("listening");
       hasSpeechRef.current = false;
@@ -80,10 +92,16 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
         setRmsLevel(rms);
 
         if (rms > VAD_THRESHOLD) {
+          if (!hasSpeechRef.current) {
+            console.log(`[VAD] Speech detected at RMS=${rms.toFixed(4)}`);
+          }
           hasSpeechRef.current = true;
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
-            if (hasSpeechRef.current) stopCapture();
+            if (hasSpeechRef.current) {
+              console.log(`[VAD] Silence detected, stopping recording`);
+              stopCapture();
+            }
           }, VAD_SILENCE_MS);
         }
 

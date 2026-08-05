@@ -24,18 +24,22 @@ export function VoiceChat() {
   const [micError, setMicError] = useState("");
   const [fallbackMode, setFallbackMode] = useState<"whisper" | "browser_stt" | "browser_tts" | null>(null);
   const [backendAwake, setBackendAwake] = useState(false);
-  const pendingAudioRef = useRef("");
+  const audioBufferRef = useRef("");
   const currentSentenceRef = useRef("");
 
   const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis({ language });
   const { playChunk, stopAll: stopAudioPlayback } = useAudioPlayback();
 
-  // VAD audio capture -> send to backend Whisper
   const handleVadAudio = useCallback(
     (blob: Blob) => {
+      const t0 = performance.now();
+      console.log(`[Pipeline] Audio captured, sending to backend...`);
+
       const reader = new FileReader();
       reader.onload = () => {
         const b64 = (reader.result as string).split(",")[1];
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[Pipeline] Audio encoded in ${elapsed}ms, size=${b64.length}`);
         sendMessage({
           type: "user_audio",
           data: b64,
@@ -52,7 +56,6 @@ export function VoiceChat() {
     onAudioCaptured: handleVadAudio,
   });
 
-  // Browser STT fallback
   const handleSttResult = useCallback(
     (text: string, isFinal: boolean) => {
       if (isFinal) {
@@ -79,7 +82,6 @@ export function VoiceChat() {
     stopRecording: sttStop,
   } = useSpeechRecognition({ language, onResult: handleSttResult, onError: handleSttError });
 
-  // Mic toggle: try VAD first, fall back to browser STT
   const handleMicToggle = useCallback(async () => {
     if (isSpeaking) {
       stopSpeaking();
@@ -105,7 +107,6 @@ export function VoiceChat() {
 
   const activeRecordingState = vadState === "idle" ? sttState : vadState;
 
-  // WebSocket event handler
   const handleWSEvent = useCallback(
     (event: WSEvent) => {
       switch (event.type) {
@@ -137,13 +138,6 @@ export function VoiceChat() {
           const token = event.token as string;
           setAiStreamingText((prev) => prev + token);
           currentSentenceRef.current += token;
-
-          const sentenceEnders = /[.!?\u0964\u0965]/;
-          if (sentenceEnders.test(token) && currentSentenceRef.current.trim().length > 5) {
-            const sentence = currentSentenceRef.current.trim();
-            currentSentenceRef.current = "";
-            synthesizeAndPlay(sentence, language);
-          }
           break;
         }
 
@@ -154,25 +148,21 @@ export function VoiceChat() {
             { id: nextId(), role: "ai", text: fullText, language, timestamp: Date.now() },
           ]);
           setAiStreamingText("");
-
-          if (currentSentenceRef.current.trim().length > 0) {
-            synthesizeAndPlay(currentSentenceRef.current.trim(), language);
-            currentSentenceRef.current = "";
-          }
+          currentSentenceRef.current = "";
           break;
         }
 
         case "audio_start":
-          pendingAudioRef.current = "";
+          audioBufferRef.current = "";
           break;
 
         case "audio_chunk":
-          pendingAudioRef.current += event.data as string;
+          audioBufferRef.current += event.data as string;
           break;
 
         case "audio_end": {
-          const data = pendingAudioRef.current;
-          pendingAudioRef.current = "";
+          const data = audioBufferRef.current;
+          audioBufferRef.current = "";
           if (data) playChunk(data);
           break;
         }
@@ -192,26 +182,28 @@ export function VoiceChat() {
     [language, playChunk]
   );
 
-  // Sentence-level TTS: send completed sentence to backend for edge-tts
-  const synthesizeAndPlay = useCallback(
-    (sentence: string, lang: Language) => {
-      sendMessage({ type: "tts_only", text: sentence, language: lang });
+  const handleAudioBinary = useCallback(
+    (chunk: Uint8Array) => {
+      let binary = "";
+      for (let i = 0; i < chunk.length; i++) {
+        binary += String.fromCharCode(chunk[i]);
+      }
+      playChunk(btoa(binary));
     },
-    []
+    [playChunk]
   );
 
-  // Note: sentence-level TTS is handled by backend ai_done event streaming
-  // The above is a placeholder for a dedicated tts endpoint if needed
+  const { connectionState, sendMessage, sendBinary, setWaking } = useWebSocket({
+    onEvent: handleWSEvent,
+    onAudioChunk: handleAudioBinary,
+  });
 
-  const { connectionState, sendMessage, setWaking } = useWebSocket({ onEvent: handleWSEvent });
-
-  // Cold-start detection
   useEffect(() => {
     const checkHealth = async () => {
       setWaking();
       try {
         const start = Date.now();
-        const res = await fetch(API_URL + "/api/health", { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(API_URL + "/api/health", { signal: AbortSignal.timeout(5000) });
         if (!res.ok) throw new Error("not ok");
         const elapsed = Date.now() - start;
         setBackendAwake(true);
@@ -224,7 +216,7 @@ export function VoiceChat() {
             if (res.ok) {
               clearInterval(poll);
               setBackendAwake(true);
-              setStatusMsg("Server is ready!");
+              setStatusMsg("");
             }
           } catch {
             // keep polling
@@ -235,7 +227,6 @@ export function VoiceChat() {
     checkHealth();
   }, [setWaking]);
 
-  // Load browser voices
   useEffect(() => {
     window.speechSynthesis?.getVoices();
     const h = () => window.speechSynthesis?.getVoices();

@@ -1,6 +1,7 @@
-"""Groq Whisper STT integration."""
+"""Groq Whisper STT integration — optimized for low latency."""
 
 import os
+import time
 import logging
 from typing import Optional
 
@@ -14,11 +15,7 @@ def transcribe_audio(
     language: str = "ta",
     mime_type: str = "audio/webm",
 ) -> Optional[str]:
-    """Transcribe audio using Groq Whisper API.
-
-    Accepts webm/opus natively — no format conversion needed.
-    Returns transcribed text or None on failure.
-    """
+    """Transcribe audio using Groq Whisper API."""
     try:
         from groq import Groq
 
@@ -37,20 +34,22 @@ def transcribe_audio(
         }
         file_ext = suffix_map.get(mime_type, "webm")
 
+        t0 = time.time()
         transcription = client.audio.transcriptions.create(
             file=("audio." + file_ext, audio_bytes, mime_type),
             model=WHISPER_MODEL,
             language=language,
         )
+        elapsed = (time.time() - t0) * 1000
 
         text = transcription.text.strip() if transcription.text else ""
         if text:
-            logger.info(f"Whisper transcription ({language}): {text[:100]}...")
+            logger.info(f"[STT] Whisper done in {elapsed:.0f}ms ({language}): {text[:80]}...")
             return text
         else:
-            logger.warning("Whisper returned empty transcription")
+            logger.warning(f"[STT] Whisper returned empty in {elapsed:.0f}ms")
             return None
 
     except Exception as e:
-        logger.error(f"Whisper transcription failed: {e}")
+        logger.error(f"[STT] Whisper failed: {e}")
         return None
