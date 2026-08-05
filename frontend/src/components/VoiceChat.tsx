@@ -173,13 +173,11 @@ export function VoiceChat() {
           break;
 
         case "audio_chunk":
-          audioBufferRef.current += event.data as string;
+          playChunk(event.data as string);
           break;
 
         case "audio_end": {
-          const data = audioBufferRef.current;
           audioBufferRef.current = "";
-          if (data) playChunk(data);
           vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
