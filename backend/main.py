@@ -187,7 +187,15 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
 
     stt_lang = language_hint if language_hint in ("ta", "en") else session_lang["lang"]
     t_stt = time.time()
+
+    async def _stt_progress():
+        await asyncio.sleep(5)
+        if (time.time() - t_stt) < 15:
+            await _send(ws, "status", {"message": "Still transcribing, please wait..."})
+
+    progress_task = asyncio.create_task(_stt_progress())
     transcribed = await transcribe_audio(audio_bytes, stt_lang, mime_type)
+    progress_task.cancel()
     stt_ms = (time.time() - t_stt) * 1000
     stats.groq_stt_requests += 1
 
@@ -246,6 +254,8 @@ async def _process_and_respond(ws, user_text, lang, history):
     except Exception as e:
         logger.error(f"LLM error: {e}")
         stats.log_error(f"LLM: {e}")
+        if audio_started:
+            await _send(ws, "audio_end", {})
         await _send(ws, "error", {"message": f"AI failed: {str(e)}"})
         return
 
