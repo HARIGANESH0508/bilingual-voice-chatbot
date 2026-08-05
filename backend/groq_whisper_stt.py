@@ -70,7 +70,7 @@ async def transcribe_audio(
     If language is None, Whisper auto-detects (best for bilingual use).
     """
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
             loop.run_in_executor(None, _transcribe_sync, audio_bytes, language, mime_type),
             timeout=STT_TIMEOUT_SECONDS,

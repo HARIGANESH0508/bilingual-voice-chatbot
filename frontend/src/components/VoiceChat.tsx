@@ -128,6 +128,9 @@ export function VoiceChat() {
           const lang = event.language as Language;
           setLanguage(lang);
           setInterimText("");
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
           setMessages((prev) => [
             ...prev,
             { id: nextId(), role: "user", text, language: lang, timestamp: Date.now(), source: (event.source as "text" | "voice" | "whisper") || "voice" },
@@ -138,6 +141,10 @@ export function VoiceChat() {
         case "ai_start":
           setAiStreamingText("");
           currentSentenceRef.current = "";
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
+          setStatusMsg("");
           break;
 
         case "ai_token": {
@@ -155,6 +162,9 @@ export function VoiceChat() {
           ]);
           setAiStreamingText("");
           currentSentenceRef.current = "";
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
           break;
         }
 
@@ -170,18 +180,24 @@ export function VoiceChat() {
           const data = audioBufferRef.current;
           audioBufferRef.current = "";
           if (data) playChunk(data);
-          vadReset();
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
           break;
         }
 
         case "tts_fallback":
           setFallbackMode("browser_tts");
-          vadReset();
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
           break;
 
         case "error":
           setStatusMsg(`Error: ${event.message}`);
-          vadReset();
+          setSttWarning(null);
+          clearTimeout(sttTimerRef.current);
+          clearTimeout(sttTimeoutRef.current);
           break;
 
         case "pong":

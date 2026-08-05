@@ -91,7 +91,7 @@ async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
     history: list[dict] = []
-    session_lang: str = "en"
+    session_lang: dict = {"lang": "en"}
 
     await _send(websocket, "session_info", {"client_id": client_id})
 
@@ -149,6 +149,7 @@ async def _handle_text(ws, msg, client_id, history, session_lang):
 
     t0 = time.time()
     lang = detect_language(user_text)
+    session_lang["lang"] = lang
     await _send(ws, "transcript", {"text": user_text, "language": lang})
     logger.info(f"[Pipeline] Text received in {(time.time()-t0)*1000:.0f}ms: {user_text[:50]}")
 
@@ -184,7 +185,7 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
 
     logger.info(f"[Pipeline] Audio decode: {len(audio_bytes)} bytes in {(time.time()-t0)*1000:.0f}ms, hint={language_hint}")
 
-    stt_lang = language_hint if language_hint in ("ta", "en") else session_lang
+    stt_lang = language_hint if language_hint in ("ta", "en") else session_lang["lang"]
     t_stt = time.time()
     transcribed = await transcribe_audio(audio_bytes, stt_lang, mime_type)
     stt_ms = (time.time() - t_stt) * 1000
@@ -199,6 +200,7 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
     logger.info(f"[Pipeline] STT done in {stt_ms:.0f}ms: {transcribed[:50]}")
 
     lang = detect_language(transcribed)
+    session_lang["lang"] = lang
     await _send(ws, "transcript", {"text": transcribed, "language": lang, "source": "whisper"})
 
     history.append({"role": "user", "text": transcribed})
