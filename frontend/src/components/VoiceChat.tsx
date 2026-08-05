@@ -180,6 +180,7 @@ export function VoiceChat() {
           const data = audioBufferRef.current;
           audioBufferRef.current = "";
           if (data) playChunk(data);
+          vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
           clearTimeout(sttTimeoutRef.current);
@@ -188,6 +189,7 @@ export function VoiceChat() {
 
         case "tts_fallback":
           setFallbackMode("browser_tts");
+          vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
           clearTimeout(sttTimeoutRef.current);
@@ -195,6 +197,7 @@ export function VoiceChat() {
 
         case "error":
           setStatusMsg(`Error: ${event.message}`);
+          vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
           clearTimeout(sttTimeoutRef.current);
