@@ -1,4 +1,4 @@
-"""edge-tts synthesis — robust with retry and fallback."""
+"""edge-tts synthesis — robust with retry, fallback, and SSML for Tamil."""
 
 import os
 import logging
@@ -20,11 +20,23 @@ def _get_voices(language: str) -> list[str]:
     return ENGLISH_VOICES
 
 
-async def _synthesize_once(text: str, voice: str) -> Optional[bytes]:
-    """Try to synthesize with a single voice."""
+def _wrap_ssml(text: str, language: str) -> str:
+    """Wrap text in SSML with prosody for better pronunciation."""
+    if language == "ta":
+        # Tamil: slightly slower rate for clarity, medium pitch
+        return f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ta-IN"><voice name="ta-IN-PallaviNeural"><prosody rate="-5%" pitch="+0%">\n{text}\n</prosody></voice></speak>'
+    else:
+        # English: neutral prosody
+        return f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-IN"><voice name="en-IN-NeerjaNeural"><prosody rate="-5%" pitch="+0%">\n{text}\n</prosody></voice></speak>'
+
+
+async def _synthesize_once(text: str, voice: str, language: str) -> Optional[bytes]:
+    """Try to synthesize with a single voice using SSML."""
     import edge_tts
 
-    communicate = edge_tts.Communicate(text, voice)
+    # Use SSML for better pronunciation
+    ssml_text = _wrap_ssml(text, language)
+    communicate = edge_tts.Communicate(ssml_text, voice)
     audio_data = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -43,7 +55,7 @@ async def synthesize_chunk(
         for voice in voices:
             try:
                 result = await asyncio.wait_for(
-                    _synthesize_once(text, voice),
+                    _synthesize_once(text, voice, language),
                     timeout=TTS_TIMEOUT_SECONDS,
                 )
                 if result:

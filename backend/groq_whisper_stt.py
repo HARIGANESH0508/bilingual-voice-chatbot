@@ -1,4 +1,4 @@
-"""Groq Whisper STT integration — optimized for low latency."""
+"""Groq Whisper STT integration — optimized for low latency and Tamil accuracy."""
 
 import os
 import time
@@ -11,8 +11,14 @@ logger = logging.getLogger(__name__)
 WHISPER_MODEL = "whisper-large-v3"
 STT_TIMEOUT_SECONDS = 30
 
-TAMIL_PROMPT = "Vanakkam. Idhu oru Tamil audio. Tamilil pesugira audio."
-ENGLISH_PROMPT = "This is a bilingual conversation in Tamil and English."
+# Detailed Tamil prompt with common words to guide Whisper
+TAMIL_PROMPT = (
+    "வணக்கம். நான் தமிழில் பேசுகிறேன். இது தமிழ் உரையாடல். "
+    "தயவுசெய்து தமிழ் வார்த்தைகளை சரியாக எழுதுங்கள். "
+    "வணக்கம், நன்றி, சரி, ஆம், இல்லை, என்ன, ஏன், எப்படி, எங்கே, யார், இது, அது. "
+    "நீங்கள் எப்படி இருக்கிறீர்கள்? என் பெயர் என்ன? சொல்லுங்கள்."
+)
+ENGLISH_PROMPT = "This is a bilingual conversation in Tamil and English. Please transcribe accurately."
 
 
 def _transcribe_sync(
@@ -53,6 +59,10 @@ def _transcribe_sync(
 
     text = transcription.text.strip() if transcription.text else ""
     if text:
+        # Apply Tamil normalization if Tamil language
+        if language == "ta":
+            from tamil_normalizer import normalize_tamil
+            text = normalize_tamil(text)
         logger.info(f"[STT] Whisper done in {elapsed:.0f}ms: {text[:80]}...")
         return text
     else:
