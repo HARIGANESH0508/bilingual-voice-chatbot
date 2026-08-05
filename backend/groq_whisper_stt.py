@@ -12,10 +12,13 @@ WHISPER_MODEL = "whisper-large-v3-turbo"
 
 def transcribe_audio(
     audio_bytes: bytes,
-    language: str = "ta",
+    language: Optional[str] = None,
     mime_type: str = "audio/webm",
 ) -> Optional[str]:
-    """Transcribe audio using Groq Whisper API."""
+    """Transcribe audio using Groq Whisper API.
+
+    If language is None, Whisper auto-detects (best for bilingual use).
+    """
     try:
         from groq import Groq
 
@@ -35,16 +38,19 @@ def transcribe_audio(
         file_ext = suffix_map.get(mime_type, "webm")
 
         t0 = time.time()
-        transcription = client.audio.transcriptions.create(
-            file=("audio." + file_ext, audio_bytes, mime_type),
-            model=WHISPER_MODEL,
-            language=language,
-        )
+        kwargs = {
+            "file": ("audio." + file_ext, audio_bytes, mime_type),
+            "model": WHISPER_MODEL,
+        }
+        if language:
+            kwargs["language"] = language
+
+        transcription = client.audio.transcriptions.create(**kwargs)
         elapsed = (time.time() - t0) * 1000
 
         text = transcription.text.strip() if transcription.text else ""
         if text:
-            logger.info(f"[STT] Whisper done in {elapsed:.0f}ms ({language}): {text[:80]}...")
+            logger.info(f"[STT] Whisper done in {elapsed:.0f}ms: {text[:80]}...")
             return text
         else:
             logger.warning(f"[STT] Whisper returned empty in {elapsed:.0f}ms")

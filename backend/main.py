@@ -180,10 +180,9 @@ async def _handle_audio(ws, msg, client_id, history):
 
     logger.info(f"[Pipeline] Audio received: {len(audio_bytes)} bytes, decoding in {(time.time()-t0)*1000:.0f}ms")
 
-    whisper_lang = "ta" if language_hint == "ta" else "en"
     t_stt = time.time()
     transcribed = await asyncio.get_event_loop().run_in_executor(
-        None, transcribe_audio, audio_bytes, whisper_lang, mime_type
+        None, transcribe_audio, audio_bytes, None, mime_type
     )
     stt_ms = (time.time() - t_stt) * 1000
     stats.groq_stt_requests += 1
