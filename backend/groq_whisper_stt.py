@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-WHISPER_MODEL = "whisper-large-v3-turbo"
+WHISPER_MODEL = "whisper-large-v3"
 
 
 def transcribe_audio(

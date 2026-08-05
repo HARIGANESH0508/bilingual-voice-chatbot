@@ -5,5 +5,5 @@ export const API_URL = WS_BASE.replace("ws://", "http://").replace("wss://", "ht
 export const RATE_LIMIT_DEBOUNCE_MS = 1000;
 export const MAX_TEXT_LENGTH = 500;
 
-export const VAD_THRESHOLD = 0.015;
-export const VAD_SILENCE_MS = 800;
+export const VAD_THRESHOLD = 0.012;
+export const VAD_SILENCE_MS = 1200;

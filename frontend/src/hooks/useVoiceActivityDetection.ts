@@ -37,7 +37,13 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
   const startCapture = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+        },
       });
       streamRef.current = stream;
 
