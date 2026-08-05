@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 TAMIL_VOICE = os.getenv("TTS_TAMIL_VOICE", "ta-IN-PallaviNeural")
 ENGLISH_VOICE = os.getenv("TTS_ENGLISH_VOICE", "en-IN-NeerjaNeural")
+TTS_TIMEOUT_SECONDS = 10
 
 
 def _get_voice(language: str) -> str:
@@ -27,15 +28,23 @@ async def synthesize_chunk(
         communicate = edge_tts.Communicate(text, voice)
 
         audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
+
+        async def _stream():
+            nonlocal audio_data
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_data += chunk["data"]
+
+        await asyncio.wait_for(_stream(), timeout=TTS_TIMEOUT_SECONDS)
 
         if audio_data:
             return audio_data
         logger.warning(f"edge-tts returned no audio for: {text[:50]}...")
         return None
 
+    except asyncio.TimeoutError:
+        logger.error(f"edge-tts timed out after {TTS_TIMEOUT_SECONDS}s for: {text[:50]}...")
+        return None
     except Exception as e:
         logger.error(f"edge-tts failed: {e}")
         return None

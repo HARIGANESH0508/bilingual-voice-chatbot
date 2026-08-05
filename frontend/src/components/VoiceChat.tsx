@@ -261,6 +261,10 @@ export function VoiceChat() {
 
   const handleTextSend = useCallback(
     (text: string) => {
+      setStatusMsg("");
+      setSttWarning(null);
+      clearTimeout(sttTimerRef.current);
+      clearTimeout(sttTimeoutRef.current);
       const detected = detectLanguage(text);
       setLanguage(detected);
       setMessages((prev) => [
