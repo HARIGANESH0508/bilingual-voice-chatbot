@@ -167,7 +167,6 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
 
     audio_b64 = msg.get("data", "")
     mime_type = msg.get("mime_type", "audio/webm")
-    language_hint = msg.get("language", None)
 
     if not audio_b64:
         await _send(ws, "error", {"message": "No audio data"})
@@ -183,9 +182,10 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
         await _send(ws, "error", {"message": "Invalid audio data"})
         return
 
-    logger.info(f"[Pipeline] Audio decode: {len(audio_bytes)} bytes in {(time.time()-t0)*1000:.0f}ms, hint={language_hint}")
+    audio_duration_ms = len(audio_bytes) / 16
+    logger.info(f"[Pipeline] Audio: {len(audio_bytes)} bytes, ~{audio_duration_ms:.0f}ms duration, mime={mime_type}")
 
-    stt_lang = language_hint if language_hint in ("ta", "en") else session_lang["lang"]
+    stt_lang = session_lang["lang"]
     t_stt = time.time()
 
     async def _stt_progress():
@@ -205,10 +205,12 @@ async def _handle_audio(ws, msg, client_id, history, session_lang):
         await _send(ws, "error", {"message": "Could not transcribe. Please try again."})
         return
 
-    logger.info(f"[Pipeline] STT done in {stt_ms:.0f}ms: {transcribed[:50]}")
+    from tamil_normalizer import normalize_tamil
+    transcribed = normalize_tamil(transcribed)
 
     lang = detect_language(transcribed)
     session_lang["lang"] = lang
+    logger.info(f"[Pipeline] STT: {stt_ms:.0f}ms, lang={lang}, model=whisper-large-v3: {transcribed[:80]}")
     await _send(ws, "transcript", {"text": transcribed, "language": lang, "source": "whisper"})
 
     history.append({"role": "user", "text": transcribed})

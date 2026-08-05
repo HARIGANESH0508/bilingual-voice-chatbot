@@ -1,4 +1,4 @@
-"""Groq Whisper STT integration — optimized for low latency and Tamil accuracy."""
+"""Groq Whisper STT integration — optimized for Tamil accuracy."""
 
 import os
 import time
@@ -8,17 +8,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-WHISPER_MODEL = "whisper-large-v3"
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-large-v3")
 STT_TIMEOUT_SECONDS = 30
 
-# Detailed Tamil prompt with common words to guide Whisper
+# Short, focused Tamil prompt — long prompts DEGRADE accuracy
+# These are common Tamil words Whisper should recognize
 TAMIL_PROMPT = (
-    "வணக்கம். நான் தமிழில் பேசுகிறேன். இது தமிழ் உரையாடல். "
-    "தயவுசெய்து தமிழ் வார்த்தைகளை சரியாக எழுதுங்கள். "
-    "வணக்கம், நன்றி, சரி, ஆம், இல்லை, என்ன, ஏன், எப்படி, எங்கே, யார், இது, அது. "
-    "நீங்கள் எப்படி இருக்கிறீர்கள்? என் பெயர் என்ன? சொல்லுங்கள்."
+    "வணக்கம் நன்றி சரி ஆம் இல்லை என்ன ஏன் எப்படி எங்கே யார் "
+    "இது அது பேசு சொல்லு வாங்க போங்க பண்ணுங்க இருக்கு "
+    "தமிழ் ஆங்கிலம் கலந்து பேசுகிறோம்"
 )
-ENGLISH_PROMPT = "This is a bilingual conversation in Tamil and English. Please transcribe accurately."
+ENGLISH_PROMPT = (
+    "This is a bilingual Tamil and English conversation. "
+    "Speak naturally mixing Tamil and English words."
+)
 
 
 def _transcribe_sync(
@@ -45,28 +48,40 @@ def _transcribe_sync(
     file_ext = suffix_map.get(mime_type, "webm")
 
     t0 = time.time()
+
+    # Always set language + prompt for best accuracy
+    prompt = TAMIL_PROMPT if language == "ta" else ENGLISH_PROMPT
+
     kwargs = {
         "file": ("audio." + file_ext, audio_bytes, mime_type),
         "model": WHISPER_MODEL,
+        "language": language or "en",
+        "prompt": prompt,
+        "temperature": 0.0,
+        "response_format": "verbose_json",
     }
-    if language:
-        kwargs["language"] = language
-        kwargs["prompt"] = TAMIL_PROMPT if language == "ta" else ENGLISH_PROMPT
-        kwargs["temperature"] = 0.0
 
     transcription = client.audio.transcriptions.create(**kwargs)
     elapsed = (time.time() - t0) * 1000
 
     text = transcription.text.strip() if transcription.text else ""
+
+    # Log confidence and detected language from verbose response
+    detected_lang = getattr(transcription, "language", language)
+    avg_logprob = getattr(transcription, "avg_logprob", None)
+    no_speech_prob = getattr(transcription, "no_speech_prob", None)
+    log_msg = f"[STT] {WHISPER_MODEL} done in {elapsed:.0f}ms, lang={detected_lang}"
+    if avg_logprob is not None:
+        log_msg += f", avg_logprob={avg_logprob:.3f}"
+    if no_speech_prob is not None:
+        log_msg += f", no_speech={no_speech_prob:.3f}"
+    log_msg += f": {text[:80]}"
+
     if text:
-        # Apply Tamil normalization if Tamil language
-        if language == "ta":
-            from tamil_normalizer import normalize_tamil
-            text = normalize_tamil(text)
-        logger.info(f"[STT] Whisper done in {elapsed:.0f}ms: {text[:80]}...")
+        logger.info(log_msg)
         return text
     else:
-        logger.warning(f"[STT] Whisper returned empty in {elapsed:.0f}ms")
+        logger.warning(f"{log_msg} (empty)")
         return None
 
 
@@ -77,7 +92,7 @@ async def transcribe_audio(
 ) -> Optional[str]:
     """Transcribe audio using Groq Whisper API with timeout.
 
-    If language is None, Whisper auto-detects (best for bilingual use).
+    language: 'ta' for Tamil, 'en' for English. Always set for best accuracy.
     """
     try:
         loop = asyncio.get_running_loop()

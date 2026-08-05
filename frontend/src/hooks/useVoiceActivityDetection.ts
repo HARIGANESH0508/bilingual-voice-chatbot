@@ -6,6 +6,9 @@ interface UseVADOptions {
   onAudioCaptured: (blob: Blob) => void;
 }
 
+const PRE_SPEECH_MS = 300;
+const MIN_RECORDING_MS = 400;
+
 export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [rmsLevel, setRmsLevel] = useState(0);
@@ -18,6 +21,7 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
   const chunksRef = useRef<Blob[]>([]);
   const onAudioRef = useRef(onAudioCaptured);
   const startTimeRef = useRef(0);
+  const preSpeechChunksRef = useRef<Blob[]>([]);
   onAudioRef.current = onAudioCaptured;
 
   const stopCapture = useCallback(() => {
@@ -68,16 +72,30 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
+      preSpeechChunksRef.current = [];
+
+      let preSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          if (!hasSpeechRef.current) {
+            preSpeechChunksRef.current.push(e.data);
+            if (preSpeechChunksRef.current.length > 15) {
+              preSpeechChunksRef.current = preSpeechChunksRef.current.slice(-10);
+            }
+          } else {
+            chunksRef.current.push(e.data);
+          }
+        }
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const preBlob = new Blob(preSpeechChunksRef.current, { type: mimeType });
+        const mainBlob = new Blob(chunksRef.current, { type: mimeType });
+        const blob = new Blob([preBlob, mainBlob], { type: mimeType });
         const elapsed = Date.now() - startTimeRef.current;
-        console.log(`[VAD] Recording captured: ${blob.size} bytes in ${elapsed}ms`);
-        if (blob.size > 100) {
+        console.log(`[VAD] Recording captured: ${blob.size} bytes in ${elapsed}ms (pre-speech: ${preSpeechChunksRef.current.length} chunks)`);
+        if (blob.size > 200 && elapsed > MIN_RECORDING_MS) {
           onAudioRef.current(blob);
         } else {
           setRecordingState("idle");
@@ -93,19 +111,24 @@ export function useVoiceActivityDetection({ onAudioCaptured }: UseVADOptions) {
       const monitor = () => {
         analyser.getFloatTimeDomainData(dataArray);
         let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i];
+        let maxAbs = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const v = Math.abs(dataArray[i]);
+          if (v > maxAbs) maxAbs = v;
+          sum += dataArray[i] * dataArray[i];
+        }
         const rms = Math.sqrt(sum / dataArray.length);
         setRmsLevel(rms);
 
         if (rms > VAD_THRESHOLD) {
           if (!hasSpeechRef.current) {
-            console.log(`[VAD] Speech detected at RMS=${rms.toFixed(4)}`);
+            console.log(`[VAD] Speech detected at RMS=${rms.toFixed(4)}, peak=${maxAbs.toFixed(4)}`);
           }
           hasSpeechRef.current = true;
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
             if (hasSpeechRef.current) {
-              console.log(`[VAD] Silence detected, stopping recording`);
+              console.log(`[VAD] Silence detected after ${VAD_SILENCE_MS}ms, stopping recording`);
               stopCapture();
             }
           }, VAD_SILENCE_MS);
