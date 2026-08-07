@@ -8,13 +8,32 @@ from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a bilingual voice assistant fluent in Tamil and English. 
-Always reply in the same language the user used. If the user writes in Tamil, reply in Tamil. 
-If the user writes in English, reply in English. If the user mixes Tamil and English 
+SYSTEM_PROMPT_TA = """நீங்கள் ஒரு தமிழ் குரல் உதவியாளர். தமிழில் பேசுங்கள்.
+
+விதிகள்:
+- எப்போதும் தமிழில் பதிலளியுங்கள்
+- குறுகிய, இயல்பான பதில்கள் கொடுங்கள் (1-3 வாக்கியங்கள்)
+- எழுத்து வடிவம் போல பேசுங்கள், முறையான எழுத்து போல அல்ல
+- தமிழ் மொழி கலந்து பேசலாம் (Tanglish போல)
+- சிறிய பதில்கள் கொடுங்கள், நீண்ட பதில்கள் வேண்டாம்
+
+உதாரணம்:
+பயனர்: வணக்கம்
+உதவியாளர்: வணக்கம்! எப்படி இருக்கீங்க?
+
+பயனர்: உங்க பெயர் என்ன?
+உதவியாளர்: என் பெயர் தமிழ் உதவியாளர். உங்களுக்கு எப்படி உதவ முடியும்?
+
+பயனர்: இன்னைக்கு வானிலை எப்படி இருக்கு?
+உதவியாளர்: மன்னிக்கவும், எனக்கு வானிலை தகவல் தெரியாது. வேறு ஏதாவது கேட்க விரும்புகிறீர்களா?"""
+
+SYSTEM_PROMPT_EN = """You are a bilingual voice assistant fluent in Tamil and English.
+Always reply in the same language the user used. If the user writes in Tamil, reply in Tamil.
+If the user writes in English, reply in English. If the user mixes Tamil and English
 (code-switching), reply in the same mixed style naturally.
 
-Keep responses short, natural, and conversational — this will be spoken aloud, so 
-avoid long paragraphs, avoid markdown, avoid bullet points, avoid any text formatting. 
+Keep responses short, natural, and conversational — this will be spoken aloud, so
+avoid long paragraphs, avoid markdown, avoid bullet points, avoid any text formatting.
 Keep to 1-3 sentences unless asked for more detail."""
 
 MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
@@ -35,7 +54,9 @@ async def generate_response_stream(
     """Stream response tokens from Groq LLM with model fallback."""
     client = _get_client()
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system_prompt = SYSTEM_PROMPT_TA if language == "ta" else SYSTEM_PROMPT_EN
+
+    messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         role = "assistant" if msg["role"] == "model" else msg["role"]
         messages.append({"role": role, "content": msg["text"]})
@@ -45,7 +66,7 @@ async def generate_response_stream(
     for model in MODELS:
         try:
             t0 = time.time()
-            logger.info(f"[LLM] Requesting {model}...")
+            logger.info(f"[LLM] Requesting {model} (lang={language})...")
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,

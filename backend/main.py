@@ -292,11 +292,18 @@ async def _process_and_respond(ws, user_text, lang, history):
             logger.info(f"[Pipeline] TTS done in {((time.time()-t0)*1000):.0f}ms, {len(audio_data)} bytes")
             stats.tts_chars += len(sentence_buffer.strip())
             stats.tts_requests += 1
+        else:
+            logger.warning(f"[Pipeline] TTS FAILED for final sentence: '{sentence_buffer.strip()[:50]}'")
 
     if audio_started:
         await _send(ws, "audio_end", {})
 
     if audio_started and not any_tts_ok:
+        logger.warning("[Pipeline] ALL TTS FAILED - sending fallback to browser TTS")
+        await _send(ws, "tts_fallback", {"message": "Using device voice"})
+
+    if not audio_started:
+        logger.info("[Pipeline] No audio generated (short response or no sentences)")
         await _send(ws, "tts_fallback", {"message": "Using device voice"})
 
 
