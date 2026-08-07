@@ -87,33 +87,57 @@ async def health():
 
 
 @app.get("/api/test-tts")
-async def test_tts(lang: str = "ta", text: str = ""):
-    """Test TTS endpoint for debugging."""
+async def test_tts(lang: str = "ta", text: str = "", engine: str = "all"):
+    """Test TTS endpoint — engine=edge|gtts|all"""
     if not text:
         text = "வணக்கம்! நான் தமிழ் உதவியாளர். உங்களுக்கு எப்படி உதவ முடியும்?" if lang == "ta" else "Hello! How can I help you?"
-    
-    t0 = time.time()
-    audio_data = await synthesize_chunk(text, lang)
-    elapsed = (time.time() - t0) * 1000
-    
-    if audio_data:
-        return {
-            "status": "ok",
-            "language": lang,
-            "text": text,
-            "bytes": len(audio_data),
-            "ms": round(elapsed),
-            "message": f"TTS OK: {len(audio_data)} bytes in {elapsed:.0f}ms"
-        }
-    else:
-        return {
-            "status": "failed",
-            "language": lang,
-            "text": text,
-            "bytes": 0,
-            "ms": round(elapsed),
-            "message": "TTS FAILED - edge-tts returned no audio"
-        }
+
+    results = {}
+
+    if engine in ("edge", "all"):
+        t0 = time.time()
+        try:
+            import edge_tts
+            voice = "ta-IN-PallaviNeural" if lang == "ta" else "en-IN-NeerjaNeural"
+            rate = "-10%" if lang == "ta" else "+0%"
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch="+0Hz")
+            audio_data = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_data += chunk["data"]
+            elapsed = (time.time() - t0) * 1000
+            results["edge_tts"] = {
+                "status": "ok" if audio_data else "empty",
+                "bytes": len(audio_data),
+                "ms": round(elapsed),
+                "voice": voice,
+            }
+        except Exception as e:
+            elapsed = (time.time() - t0) * 1000
+            results["edge_tts"] = {"status": "error", "error": str(e), "ms": round(elapsed)}
+
+    if engine in ("gtts", "all"):
+        t0 = time.time()
+        try:
+            from gtts import gTTS
+            import io
+            lang_code = "ta" if lang == "ta" else "en"
+            tts = gTTS(text=text, lang=lang_code, slow=False)
+            buf = io.BytesIO()
+            tts.write_to_fp(buf)
+            buf.seek(0)
+            audio_data = buf.read()
+            elapsed = (time.time() - t0) * 1000
+            results["gtts"] = {
+                "status": "ok" if audio_data else "empty",
+                "bytes": len(audio_data),
+                "ms": round(elapsed),
+            }
+        except Exception as e:
+            elapsed = (time.time() - t0) * 1000
+            results["gtts"] = {"status": "error", "error": str(e), "ms": round(elapsed)}
+
+    return {"language": lang, "text": text, "results": results}
 
 
 @app.websocket("/ws/chat")

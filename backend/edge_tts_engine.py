@@ -1,4 +1,4 @@
-"""TTS engine — edge-tts primary, gTTS fallback for Tamil."""
+"""TTS engine — edge-tts primary with natural Tamil, gTTS fallback."""
 
 import os
 import logging
@@ -7,8 +7,16 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TAMIL_VOICES = ["ta-IN-PallaviNeural", "ta-IN-ValluvarNeural"]
-ENGLISH_VOICES = ["en-IN-NeerjaNeural", "en-IN-PrabhatNeural"]
+# Tamil voices — try ALL available ones
+TAMIL_VOICES = [
+    "ta-IN-PallaviNeural",
+    "ta-IN-ValluvarNeural",
+    "ta-IN-KavyaNeural",
+]
+ENGLISH_VOICES = [
+    "en-IN-NeerjaNeural",
+    "en-IN-PrabhatNeural",
+]
 TTS_TIMEOUT_SECONDS = 15
 TTS_RETRIES = 2
 TTS_RETRY_DELAY = 0.3
@@ -35,11 +43,21 @@ def _preprocess(text: str, language: str) -> str:
 
 
 async def _synthesize_edge(text: str, voice: str, language: str) -> Optional[bytes]:
-    """Try edge-tts with a single voice."""
+    """Try edge-tts with natural prosody settings."""
     import edge_tts
 
     processed = _preprocess(text, language)
-    communicate = edge_tts.Communicate(processed, voice)
+
+    # Natural speech rate and pitch for Tamil
+    rate = "-10%" if language == "ta" else "+0%"
+    pitch = "+0Hz"
+
+    communicate = edge_tts.Communicate(
+        processed,
+        voice,
+        rate=rate,
+        pitch=pitch,
+    )
     audio_data = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -48,20 +66,20 @@ async def _synthesize_edge(text: str, voice: str, language: str) -> Optional[byt
 
 
 def _synthesize_gtts_sync(text: str, language: str) -> Optional[bytes]:
-    """Synchronous gTTS fallback — works reliably for Tamil."""
+    """Synchronous gTTS fallback."""
     try:
         from gtts import gTTS
         import io
 
         processed = _preprocess(text, language)
         lang_code = "ta" if language == "ta" else "en"
-        
-        tts = gTTS(text=processed, lang=lang_code)
+
+        tts = gTTS(text=processed, lang=lang_code, slow=False)
         audio_buffer = io.BytesIO()
         tts.write_to_fp(audio_buffer)
         audio_buffer.seek(0)
         audio_bytes = audio_buffer.read()
-        
+
         return audio_bytes if audio_bytes else None
     except Exception as e:
         logger.error(f"[TTS] gTTS failed: {type(e).__name__}: {e}")
@@ -79,14 +97,14 @@ async def synthesize_chunk(
     language: str,
 ) -> Optional[bytes]:
     """Synthesize text to MP3 bytes.
-    
+
     Strategy:
-    1. Try edge-tts (2 voices x 2 retries = 4 attempts)
-    2. If all fail, use gTTS as fallback (especially for Tamil)
+    1. Try edge-tts with natural prosody (2 retries x 3 voices = 6 attempts)
+    2. If all fail, use gTTS as fallback
     """
     voices = _get_voices(language)
 
-    # Step 1: Try edge-tts
+    # Step 1: Try edge-tts with natural settings
     for attempt in range(TTS_RETRIES):
         for voice in voices:
             try:
@@ -106,7 +124,7 @@ async def synthesize_chunk(
         if attempt < TTS_RETRIES - 1:
             await asyncio.sleep(TTS_RETRY_DELAY * (attempt + 1))
 
-    # Step 2: Fallback to gTTS (especially good for Tamil)
+    # Step 2: Fallback to gTTS
     logger.info(f"[TTS] edge-tts failed, trying gTTS fallback for lang={language}")
     try:
         result = await asyncio.wait_for(
