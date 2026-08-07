@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Tamil voices — try ALL available ones
+# ALL available Tamil voices from Microsoft
 TAMIL_VOICES = [
     "ta-IN-PallaviNeural",
     "ta-IN-ValluvarNeural",
@@ -16,10 +16,12 @@ TAMIL_VOICES = [
 ENGLISH_VOICES = [
     "en-IN-NeerjaNeural",
     "en-IN-PrabhatNeural",
+    "en-IN-ShrutiNeural",
+    "en-IN-AditiNeural",
 ]
-TTS_TIMEOUT_SECONDS = 15
-TTS_RETRIES = 2
-TTS_RETRY_DELAY = 0.3
+TTS_TIMEOUT_SECONDS = 20
+TTS_RETRIES = 3
+TTS_RETRY_DELAY = 0.5
 
 
 def _get_voices(language: str) -> list[str]:
@@ -99,7 +101,7 @@ async def synthesize_chunk(
     """Synthesize text to MP3 bytes.
 
     Strategy:
-    1. Try edge-tts with natural prosody (2 retries x 3 voices = 6 attempts)
+    1. Try edge-tts with natural prosody (3 retries x 3-4 voices = 9-12 attempts)
     2. If all fail, use gTTS as fallback
     """
     voices = _get_voices(language)
