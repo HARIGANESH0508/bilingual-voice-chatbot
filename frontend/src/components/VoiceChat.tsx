@@ -32,6 +32,8 @@ export function VoiceChat() {
   const currentSentenceRef = useRef("");
   const sttTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const sttTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const hasAudioChunksRef = useRef(false);
+  const lastAiTextRef = useRef("");
 
   const { isSpeaking, speak, stop: stopSpeaking } = useSpeechSynthesis({ language });
   const { playChunk, stopAll: stopAudioPlayback } = useAudioPlayback();
@@ -141,6 +143,7 @@ export function VoiceChat() {
         case "ai_start":
           setAiStreamingText("");
           currentSentenceRef.current = "";
+          hasAudioChunksRef.current = false;
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
           clearTimeout(sttTimeoutRef.current);
@@ -156,6 +159,7 @@ export function VoiceChat() {
 
         case "ai_done": {
           const fullText = event.text as string;
+          lastAiTextRef.current = fullText;
           setMessages((prev) => [
             ...prev,
             { id: nextId(), role: "ai", text: fullText, language, timestamp: Date.now() },
@@ -173,11 +177,16 @@ export function VoiceChat() {
           break;
 
         case "audio_chunk":
+          hasAudioChunksRef.current = true;
           playChunk(event.data as string);
           break;
 
         case "audio_end": {
           audioBufferRef.current = "";
+          if (!hasAudioChunksRef.current && lastAiTextRef.current) {
+            console.log("[TTS] No server audio, using browser TTS fallback");
+            speak(lastAiTextRef.current);
+          }
           vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
@@ -187,6 +196,10 @@ export function VoiceChat() {
 
         case "tts_fallback":
           setFallbackMode("browser_tts");
+          if (lastAiTextRef.current) {
+            console.log("[TTS] Server TTS failed, using browser TTS fallback");
+            speak(lastAiTextRef.current);
+          }
           vadReset();
           setSttWarning(null);
           clearTimeout(sttTimerRef.current);
@@ -205,7 +218,7 @@ export function VoiceChat() {
           break;
       }
     },
-    [language, playChunk, vadReset]
+    [language, playChunk, vadReset, speak]
   );
 
   const handleAudioBinary = useCallback(
