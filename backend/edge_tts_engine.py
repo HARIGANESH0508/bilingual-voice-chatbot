@@ -1,4 +1,4 @@
-"""edge-tts synthesis — robust with retry, fallback, and text preprocessing."""
+"""TTS engine — edge-tts primary, gTTS fallback for Tamil."""
 
 import os
 import logging
@@ -7,17 +7,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# All available Tamil voices from Microsoft (try each one)
-TAMIL_VOICES = [
-    "ta-IN-PallaviNeural",
-    "ta-IN-ValluvarNeural",
-]
-ENGLISH_VOICES = [
-    "en-IN-NeerjaNeural",
-    "en-IN-PrabhatNeural",
-]
+TAMIL_VOICES = ["ta-IN-PallaviNeural", "ta-IN-ValluvarNeural"]
+ENGLISH_VOICES = ["en-IN-NeerjaNeural", "en-IN-PrabhatNeural"]
 TTS_TIMEOUT_SECONDS = 15
-TTS_RETRIES = 3
+TTS_RETRIES = 2
 TTS_RETRY_DELAY = 0.3
 
 
@@ -41,51 +34,93 @@ def _preprocess(text: str, language: str) -> str:
         return text
 
 
-async def _synthesize_once(text: str, voice: str, language: str) -> Optional[bytes]:
-    """Try to synthesize with a single voice."""
+async def _synthesize_edge(text: str, voice: str, language: str) -> Optional[bytes]:
+    """Try edge-tts with a single voice."""
     import edge_tts
 
     processed = _preprocess(text, language)
-    logger.info(f"[TTS] Synthesizing with {voice}: '{processed[:50]}...'")
-    
     communicate = edge_tts.Communicate(processed, voice)
     audio_data = b""
-    chunk_count = 0
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             audio_data += chunk["data"]
-            chunk_count += 1
-    
-    logger.info(f"[TTS] {voice} produced {len(audio_data)} bytes in {chunk_count} chunks")
     return audio_data if audio_data else None
+
+
+def _synthesize_gtts_sync(text: str, language: str) -> Optional[bytes]:
+    """Synchronous gTTS fallback — works reliably for Tamil."""
+    try:
+        from gtts import gTTS
+        import io
+
+        processed = _preprocess(text, language)
+        lang_code = "ta" if language == "ta" else "en"
+        
+        tts = gTTS(text=processed, lang=lang_code)
+        audio_buffer = io.BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        audio_bytes = audio_buffer.read()
+        
+        return audio_bytes if audio_bytes else None
+    except Exception as e:
+        logger.error(f"[TTS] gTTS failed: {type(e).__name__}: {e}")
+        return None
+
+
+async def _synthesize_gtts(text: str, language: str) -> Optional[bytes]:
+    """Async wrapper for gTTS fallback."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _synthesize_gtts_sync, text, language)
 
 
 async def synthesize_chunk(
     text: str,
     language: str,
 ) -> Optional[bytes]:
-    """Synthesize text to MP3 bytes with retry across multiple voices."""
+    """Synthesize text to MP3 bytes.
+    
+    Strategy:
+    1. Try edge-tts (2 voices x 2 retries = 4 attempts)
+    2. If all fail, use gTTS as fallback (especially for Tamil)
+    """
     voices = _get_voices(language)
 
+    # Step 1: Try edge-tts
     for attempt in range(TTS_RETRIES):
         for voice in voices:
             try:
                 result = await asyncio.wait_for(
-                    _synthesize_once(text, voice, language),
+                    _synthesize_edge(text, voice, language),
                     timeout=TTS_TIMEOUT_SECONDS,
                 )
                 if result:
-                    logger.info(f"[TTS] SUCCESS ({voice}, attempt {attempt+1}): {len(result)} bytes")
+                    logger.info(f"[TTS] edge-tts OK ({voice}): {len(result)} bytes")
                     return result
-                logger.warning(f"[TTS] {voice} returned empty audio (attempt {attempt+1})")
+                logger.warning(f"[TTS] edge-tts {voice} empty")
             except asyncio.TimeoutError:
-                logger.warning(f"[TTS] {voice} TIMEOUT after {TTS_TIMEOUT_SECONDS}s (attempt {attempt+1})")
+                logger.warning(f"[TTS] edge-tts {voice} timeout")
             except Exception as e:
-                logger.warning(f"[TTS] {voice} ERROR: {type(e).__name__}: {e} (attempt {attempt+1})")
+                logger.warning(f"[TTS] edge-tts {voice} error: {type(e).__name__}: {e}")
 
         if attempt < TTS_RETRIES - 1:
-            logger.info(f"[TTS] Retrying in {TTS_RETRY_DELAY * (attempt + 1):.1f}s...")
             await asyncio.sleep(TTS_RETRY_DELAY * (attempt + 1))
 
-    logger.error(f"[TTS] ALL {TTS_RETRIES * len(voices)} ATTEMPTS FAILED for: '{text[:50]}...'")
+    # Step 2: Fallback to gTTS (especially good for Tamil)
+    logger.info(f"[TTS] edge-tts failed, trying gTTS fallback for lang={language}")
+    try:
+        result = await asyncio.wait_for(
+            _synthesize_gtts(text, language),
+            timeout=20,
+        )
+        if result:
+            logger.info(f"[TTS] gTTS OK: {len(result)} bytes")
+            return result
+        logger.warning("[TTS] gTTS returned empty")
+    except asyncio.TimeoutError:
+        logger.warning("[TTS] gTTS timeout")
+    except Exception as e:
+        logger.warning(f"[TTS] gTTS error: {type(e).__name__}: {e}")
+
+    logger.error(f"[TTS] ALL ENGINES FAILED for: '{text[:50]}...'")
     return None

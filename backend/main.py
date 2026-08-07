@@ -86,6 +86,36 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/test-tts")
+async def test_tts(lang: str = "ta", text: str = ""):
+    """Test TTS endpoint for debugging."""
+    if not text:
+        text = "வணக்கம்! நான் தமிழ் உதவியாளர். உங்களுக்கு எப்படி உதவ முடியும்?" if lang == "ta" else "Hello! How can I help you?"
+    
+    t0 = time.time()
+    audio_data = await synthesize_chunk(text, lang)
+    elapsed = (time.time() - t0) * 1000
+    
+    if audio_data:
+        return {
+            "status": "ok",
+            "language": lang,
+            "text": text,
+            "bytes": len(audio_data),
+            "ms": round(elapsed),
+            "message": f"TTS OK: {len(audio_data)} bytes in {elapsed:.0f}ms"
+        }
+    else:
+        return {
+            "status": "failed",
+            "language": lang,
+            "text": text,
+            "bytes": 0,
+            "ms": round(elapsed),
+            "message": "TTS FAILED - edge-tts returned no audio"
+        }
+
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
